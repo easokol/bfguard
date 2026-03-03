@@ -26,6 +26,6 @@ It uses **nftables** to enforce the blacklist, supports both IPv4 and IPv6, and 
 ### Build from source
 
 ```bash
-git clone https://github.com/yourusername/bfguard.git
+git clone https://github.com/easokol/bfguard.git
 cd bfguard
 go build -o bfguard main.go
