@@ -1,0 +1,14 @@
+Package: bfguard
+Version: 1.0.0
+Section: net
+Priority: optional
+Architecture: amd64
+Maintainer: BFGuard Maintainers <maintainers@bfguard.local>
+Depends: nftables
+Homepage: https://example.com/bfguard
+Description: Brute-force protection daemon using nftables
+ bfguard listens on configured TCP/UDP ports and automatically
+ blacklists remote IP addresses in nftables to protect against
+ brute-force attacks. It manages IPv4/IPv6 blacklist sets and
+ installs base security rules (dropping packets with invalid
+ connection state).

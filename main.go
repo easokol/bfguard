@@ -18,16 +18,16 @@ import (
 )
 
 const (
-	tableName   = "nft-blacklist"
-	setNameV4   = "blacklist_v4"
-	setNameV6   = "blacklist_v6"
-	chainInput  = "input"
-	chainOutput = "output"
-    baseTableName    = "nft-baserules"
-    baseChainInput   = "input"
-    baseChainOutput  = "output"
-    baseCounterInput = "cnt_invalid_input"
-    baseCounterOutput = "cnt_invalid_output"
+	tableName         = "nft-blacklist"
+	setNameV4         = "blacklist_v4"
+	setNameV6         = "blacklist_v6"
+	chainInput        = "input"
+	chainOutput       = "output"
+	baseTableName     = "nft-baserules"
+	baseChainInput    = "input"
+	baseChainOutput   = "output"
+	baseCounterInput  = "cnt_invalid_input"
+	baseCounterOutput = "cnt_invalid_output"
 )
 
 var timeoutValue = 48 * time.Hour // 2 days
@@ -64,17 +64,12 @@ func main() {
 	}
 	log.Println("nftables blacklist & whitelist sets and rules ready")
 
-    if err := createInfrastructure(cfg); err != nil {
-        log.Fatalf("Failed to set up nftables: %v", err)
-    }
-    log.Println("nftables blacklist & whitelist sets and rules ready")
+	// создаём таблицу базовых правил
+	if err := createBaseRules(); err != nil {
+		log.Fatalf("Failed to set up base nftables rules: %v", err)
+	}
+	log.Println("Base security rules (invalid state drop) installed")
 
-    // создаём таблицу базовых правил
-    if err := createBaseRules(); err != nil {
-        log.Fatalf("Failed to set up base nftables rules: %v", err)
-    }
-    log.Println("Base security rules (invalid state drop) installed")
-	
 	// start TCP and UDP listeners
 	var wg sync.WaitGroup
 
@@ -243,68 +238,68 @@ func isIPv6(ipStr string) bool {
 }
 
 func createBaseRules() error {
-    nft, err := knftables.New(knftables.InetFamily, baseTableName)
-    if err != nil {
-        return fmt.Errorf("failed to create knftables interface for base rules: %w", err)
-    }
+	nft, err := knftables.New(knftables.InetFamily, baseTableName)
+	if err != nil {
+		return fmt.Errorf("failed to create knftables interface for base rules: %w", err)
+	}
 
-    ctx := context.Background()
-    tx := nft.NewTransaction()
+	ctx := context.Background()
+	tx := nft.NewTransaction()
 
-    // Таблица
-    tx.Add(&knftables.Table{
-        Comment: knftables.PtrTo("Base security rules (invalid state drop)"),
-    })
+	// Таблица
+	tx.Add(&knftables.Table{
+		Comment: knftables.PtrTo("Base security rules (invalid state drop)"),
+	})
 
-    // Счётчики
-    tx.Add(&knftables.Counter{
-        Name:    baseCounterInput,
-        Comment: knftables.PtrTo("Count dropped input packets with invalid state"),
-    })
-    tx.Add(&knftables.Counter{
-        Name:    baseCounterOutput,
-        Comment: knftables.PtrTo("Count dropped output packets with invalid state"),
-    })
+	// Счётчики
+	tx.Add(&knftables.Counter{
+		Name:    baseCounterInput,
+		Comment: knftables.PtrTo("Count dropped input packets with invalid state"),
+	})
+	tx.Add(&knftables.Counter{
+		Name:    baseCounterOutput,
+		Comment: knftables.PtrTo("Count dropped output packets with invalid state"),
+	})
 
-    // Цепочки с приоритетом -2 (выполняются до цепочек с приоритетом -1)
-    hookInput := knftables.BaseChainHook("input")
-    hookOutput := knftables.BaseChainHook("output")
-    chainType := knftables.BaseChainType("filter")
-    prio := knftables.BaseChainPriority("-2")
+	// Цепочки с приоритетом -2 (выполняются до цепочек с приоритетом -1)
+	hookInput := knftables.BaseChainHook("input")
+	hookOutput := knftables.BaseChainHook("output")
+	chainType := knftables.BaseChainType("filter")
+	prio := knftables.BaseChainPriority("-2")
 
-    tx.Add(&knftables.Chain{
-        Name:     baseChainInput,
-        Type:     &chainType,
-        Hook:     &hookInput,
-        Priority: &prio,
-        Comment:  knftables.PtrTo("Input chain for base rules"),
-    })
-    tx.Add(&knftables.Chain{
-        Name:     baseChainOutput,
-        Type:     &chainType,
-        Hook:     &hookOutput,
-        Priority: &prio,
-        Comment:  knftables.PtrTo("Output chain for base rules"),
-    })
+	tx.Add(&knftables.Chain{
+		Name:     baseChainInput,
+		Type:     &chainType,
+		Hook:     &hookInput,
+		Priority: &prio,
+		Comment:  knftables.PtrTo("Input chain for base rules"),
+	})
+	tx.Add(&knftables.Chain{
+		Name:     baseChainOutput,
+		Type:     &chainType,
+		Hook:     &hookOutput,
+		Priority: &prio,
+		Comment:  knftables.PtrTo("Output chain for base rules"),
+	})
 
-    // Правила с использованием именованных счётчиков
-    tx.Add(&knftables.Rule{
-        Chain: baseChainInput,
-        Rule:  fmt.Sprintf("ct state invalid counter name %s drop", baseCounterInput),
-        Comment: knftables.PtrTo("Drop packets with invalid connection state (input)"),
-    })
-    tx.Add(&knftables.Rule{
-        Chain: baseChainOutput,
-        Rule:  fmt.Sprintf("ct state invalid counter name %s drop", baseCounterOutput),
-        Comment: knftables.PtrTo("Drop packets with invalid connection state (output)"),
-    })
+	// Правила с использованием именованных счётчиков
+	tx.Add(&knftables.Rule{
+		Chain:   baseChainInput,
+		Rule:    fmt.Sprintf("ct state invalid counter name %s drop", baseCounterInput),
+		Comment: knftables.PtrTo("Drop packets with invalid connection state (input)"),
+	})
+	tx.Add(&knftables.Rule{
+		Chain:   baseChainOutput,
+		Rule:    fmt.Sprintf("ct state invalid counter name %s drop", baseCounterOutput),
+		Comment: knftables.PtrTo("Drop packets with invalid connection state (output)"),
+	})
 
-    // Применяем транзакцию
-    err = nft.Run(ctx, tx)
-    if err != nil && !knftables.IsAlreadyExists(err) {
-        return fmt.Errorf("failed to apply base nftables rules: %w", err)
-    }
-    return nil
+	// Применяем транзакцию
+	err = nft.Run(ctx, tx)
+	if err != nil && !knftables.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to apply base nftables rules: %w", err)
+	}
+	return nil
 }
 
 // addToBlacklistV4 adds an IPv4 address or subnet to the blacklist_v4 set.
@@ -350,132 +345,132 @@ func addToBlacklistV6(ip string) error {
 }
 
 func createInfrastructure(cfg *Config) error {
-    nft, err := knftables.New(knftables.InetFamily, tableName)
-    if err != nil {
-        return fmt.Errorf("failed to create knftables interface: %w", err)
-    }
+	nft, err := knftables.New(knftables.InetFamily, tableName)
+	if err != nil {
+		return fmt.Errorf("failed to create knftables interface: %w", err)
+	}
 
-    ctx := context.Background()
-    tx := nft.NewTransaction()
+	ctx := context.Background()
+	tx := nft.NewTransaction()
 
-    tx.Add(&knftables.Table{
-        Comment: knftables.PtrTo("Table created by nft-blacklist Go port"),
-    })
+	tx.Add(&knftables.Table{
+		Comment: knftables.PtrTo("Table created by nft-blacklist Go port"),
+	})
 
-    // 2. blacklists
-    tx.Add(&knftables.Set{
-        Name:    setNameV4,
-        Type:    "ipv4_addr",
-        Flags:   []knftables.SetFlag{knftables.IntervalFlag, knftables.TimeoutFlag},
-        Timeout: &timeoutValue,
-        Comment: knftables.PtrTo("IPv4 blacklist with auto-merge"),
-    })
-    tx.Add(&knftables.Set{
-        Name:    setNameV6,
-        Type:    "ipv6_addr",
-        Flags:   []knftables.SetFlag{knftables.IntervalFlag, knftables.TimeoutFlag},
-        Timeout: &timeoutValue,
-        Comment: knftables.PtrTo("IPv6 blacklist with auto-merge"),
-    })
+	// 2. blacklists
+	tx.Add(&knftables.Set{
+		Name:    setNameV4,
+		Type:    "ipv4_addr",
+		Flags:   []knftables.SetFlag{knftables.IntervalFlag, knftables.TimeoutFlag},
+		Timeout: &timeoutValue,
+		Comment: knftables.PtrTo("IPv4 blacklist with auto-merge"),
+	})
+	tx.Add(&knftables.Set{
+		Name:    setNameV6,
+		Type:    "ipv6_addr",
+		Flags:   []knftables.SetFlag{knftables.IntervalFlag, knftables.TimeoutFlag},
+		Timeout: &timeoutValue,
+		Comment: knftables.PtrTo("IPv6 blacklist with auto-merge"),
+	})
 
-    // 3. Named Counters
-    tx.Add(&knftables.Counter{
-        Name:    setNameV4,
-        Comment: knftables.PtrTo("Counter for IPv4 blacklist drops"),
-    })
-    tx.Add(&knftables.Counter{
-        Name:    setNameV6,
-        Comment: knftables.PtrTo("Counter for IPv6 blacklist drops"),
-    })
+	// 3. Named Counters
+	tx.Add(&knftables.Counter{
+		Name:    setNameV4,
+		Comment: knftables.PtrTo("Counter for IPv4 blacklist drops"),
+	})
+	tx.Add(&knftables.Counter{
+		Name:    setNameV6,
+		Comment: knftables.PtrTo("Counter for IPv6 blacklist drops"),
+	})
 
-    // 4. Chains
-    hookInput := knftables.BaseChainHook("input")
-    hookOutput := knftables.BaseChainHook("output")
-    chainType := knftables.BaseChainType("filter")
-    prio := knftables.BaseChainPriority("-1") // filter - 1
+	// 4. Chains
+	hookInput := knftables.BaseChainHook("input")
+	hookOutput := knftables.BaseChainHook("output")
+	chainType := knftables.BaseChainType("filter")
+	prio := knftables.BaseChainPriority("-1") // filter - 1
 
-    tx.Add(&knftables.Chain{
-        Name:     chainInput,
-        Type:     &chainType,
-        Hook:     &hookInput,
-        Priority: &prio,
-        Comment:  knftables.PtrTo("Input chain for blacklist"),
-    })
-    tx.Add(&knftables.Chain{
-        Name:     chainOutput,
-        Type:     &chainType,
-        Hook:     &hookOutput,
-        Priority: &prio,
-        Comment:  knftables.PtrTo("Output chain for blacklist"),
-    })
+	tx.Add(&knftables.Chain{
+		Name:     chainInput,
+		Type:     &chainType,
+		Hook:     &hookInput,
+		Priority: &prio,
+		Comment:  knftables.PtrTo("Input chain for blacklist"),
+	})
+	tx.Add(&knftables.Chain{
+		Name:     chainOutput,
+		Type:     &chainType,
+		Hook:     &hookOutput,
+		Priority: &prio,
+		Comment:  knftables.PtrTo("Output chain for blacklist"),
+	})
 
-    // 5. Rules
-    tx.Add(&knftables.Rule{
-        Chain: chainInput,
-        Rule:  "iif lo accept",
-    })
-    tx.Add(&knftables.Rule{
-        Chain: chainInput,
-        Rule:  "meta pkttype { broadcast, multicast } accept",
-    })
-    if len(cfg.Whitelist4) > 0 {
-        rule := fmt.Sprintf("ip saddr { %s } accept", strings.Join(cfg.Whitelist4, ", "))
-        tx.Add(&knftables.Rule{
-            Chain: chainInput,
-            Rule:  rule,
-        })
-    }
-    if len(cfg.Whitelist6) > 0 {
-        rule := fmt.Sprintf("ip6 saddr { %s } accept", strings.Join(cfg.Whitelist6, ", "))
-        tx.Add(&knftables.Rule{
-            Chain: chainInput,
-            Rule:  rule,
-        })
-    }
-    tx.Add(&knftables.Rule{
-        Chain: chainInput,
-        Rule:  fmt.Sprintf("ip saddr @%s counter name %s reject with icmp port-unreachable", setNameV4, setNameV4),
-    })
-    tx.Add(&knftables.Rule{
-        Chain: chainInput,
-        Rule:  fmt.Sprintf("ip6 saddr @%s counter name %s reject with icmpv6 port-unreachable", setNameV6, setNameV6),
-    })
+	// 5. Rules
+	tx.Add(&knftables.Rule{
+		Chain: chainInput,
+		Rule:  "iif lo accept",
+	})
+	tx.Add(&knftables.Rule{
+		Chain: chainInput,
+		Rule:  "meta pkttype { broadcast, multicast } accept",
+	})
+	if len(cfg.Whitelist4) > 0 {
+		rule := fmt.Sprintf("ip saddr { %s } accept", strings.Join(cfg.Whitelist4, ", "))
+		tx.Add(&knftables.Rule{
+			Chain: chainInput,
+			Rule:  rule,
+		})
+	}
+	if len(cfg.Whitelist6) > 0 {
+		rule := fmt.Sprintf("ip6 saddr { %s } accept", strings.Join(cfg.Whitelist6, ", "))
+		tx.Add(&knftables.Rule{
+			Chain: chainInput,
+			Rule:  rule,
+		})
+	}
+	tx.Add(&knftables.Rule{
+		Chain: chainInput,
+		Rule:  fmt.Sprintf("ip saddr @%s counter name %s reject with icmp port-unreachable", setNameV4, setNameV4),
+	})
+	tx.Add(&knftables.Rule{
+		Chain: chainInput,
+		Rule:  fmt.Sprintf("ip6 saddr @%s counter name %s reject with icmpv6 port-unreachable", setNameV6, setNameV6),
+	})
 
-    tx.Add(&knftables.Rule{
-        Chain: chainOutput,
-        Rule:  "oif lo accept",
-    })
-    tx.Add(&knftables.Rule{
-        Chain: chainOutput,
-        Rule:  "meta pkttype { broadcast, multicast } accept",
-    })
-    if len(cfg.Whitelist4) > 0 {
-        rule := fmt.Sprintf("ip daddr { %s } accept", strings.Join(cfg.Whitelist4, ", "))
-        tx.Add(&knftables.Rule{
-            Chain: chainOutput,
-            Rule:  rule,
-        })
-    }
-    if len(cfg.Whitelist6) > 0 {
-        rule := fmt.Sprintf("ip6 daddr { %s } accept", strings.Join(cfg.Whitelist6, ", "))
-        tx.Add(&knftables.Rule{
-            Chain: chainOutput,
-            Rule:  rule,
-        })
-    }
-    tx.Add(&knftables.Rule{
-        Chain: chainOutput,
-        Rule:  fmt.Sprintf("ip daddr @%s counter name %s reject with icmp port-unreachable", setNameV4, setNameV4),
-    })
-    tx.Add(&knftables.Rule{
-        Chain: chainOutput,
-        Rule:  fmt.Sprintf("ip6 daddr @%s counter name %s reject with icmpv6 port-unreachable", setNameV6, setNameV6),
-    })
+	tx.Add(&knftables.Rule{
+		Chain: chainOutput,
+		Rule:  "oif lo accept",
+	})
+	tx.Add(&knftables.Rule{
+		Chain: chainOutput,
+		Rule:  "meta pkttype { broadcast, multicast } accept",
+	})
+	if len(cfg.Whitelist4) > 0 {
+		rule := fmt.Sprintf("ip daddr { %s } accept", strings.Join(cfg.Whitelist4, ", "))
+		tx.Add(&knftables.Rule{
+			Chain: chainOutput,
+			Rule:  rule,
+		})
+	}
+	if len(cfg.Whitelist6) > 0 {
+		rule := fmt.Sprintf("ip6 daddr { %s } accept", strings.Join(cfg.Whitelist6, ", "))
+		tx.Add(&knftables.Rule{
+			Chain: chainOutput,
+			Rule:  rule,
+		})
+	}
+	tx.Add(&knftables.Rule{
+		Chain: chainOutput,
+		Rule:  fmt.Sprintf("ip daddr @%s counter name %s reject with icmp port-unreachable", setNameV4, setNameV4),
+	})
+	tx.Add(&knftables.Rule{
+		Chain: chainOutput,
+		Rule:  fmt.Sprintf("ip6 daddr @%s counter name %s reject with icmpv6 port-unreachable", setNameV6, setNameV6),
+	})
 
-    // 6. Apply
-    err = nft.Run(ctx, tx)
-    if err != nil && !knftables.IsAlreadyExists(err) {
-        return fmt.Errorf("failed to apply nftables rules: %w", err)
-    }
-    return nil
+	// 6. Apply
+	err = nft.Run(ctx, tx)
+	if err != nil && !knftables.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to apply nftables rules: %w", err)
+	}
+	return nil
 }
